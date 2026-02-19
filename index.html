@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Neon Dash</title>
+<style>
+body{
+    margin:0;
+    overflow:hidden;
+    background:black;
+    font-family:monospace;
+    color:#0ff;
+    text-align:center;
+}
+canvas{
+    display:block;
+    margin:auto;
+    background:#000;
+    box-shadow:0 0 25px #0ff;
+}
+.overlay{
+    position:absolute;
+    width:100%;
+    top:40%;
+    text-align:center;
+    color:#0ff;
+    text-shadow:0 0 15px #0ff;
+}
+button{
+    background:black;
+    border:2px solid #0ff;
+    color:#0ff;
+    padding:10px 20px;
+    margin:10px;
+    cursor:pointer;
+}
+button:hover{
+    background:#0ff;
+    color:black;
+}
+</style>
+</head>
+<body>
+
+<canvas id="game"></canvas>
+<div id="ui" class="overlay"></div>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+canvas.width = 900;
+canvas.height = 500;
+
+let gameState = "start";
+let difficulty = 1;
+let bestScore = localStorage.getItem("neonBest") || 0;
+
+// ================= プレイヤー =================
+const player = {
+    x:150,
+    y:0,
+    width:30,
+    height:30,
+    dy:0,
+    gravity:0.8,
+    jumpPower:-10, // 最低限ジャンプ
+    onGround:false,
+    rotation:0,
+    targetRotation:0
+};
+
+// ================= 変数 =================
+let obstacles=[];
+let holes=[];
+let speed=6;
+let distance=0;
+let groundHeight=100;
+let spawnTimer=0;
+let bgOffset=0;
+
+// ================= 難易度 =================
+function setDifficulty(level){
+    difficulty=level;
+    resetGame();
+}
+
+function resetGame(){
+    obstacles=[];
+    holes=[];
+    speed=5+difficulty;
+    distance=0;
+    spawnTimer=0;
+    player.y=canvas.height-groundHeight-player.height;
+    player.dy=0;
+    player.rotation=0;
+    player.targetRotation=0;
+    gameState="play";
+    document.getElementById("ui").innerHTML="";
+}
+
+// ================= 入力 =================
+document.addEventListener("keydown",e=>{
+    if(e.code==="Space") handleInput();
+});
+document.addEventListener("mousedown",handleInput);
+
+function handleInput(){
+    if(gameState==="play"){
+        if(player.onGround){
+            player.dy=player.jumpPower;
+            player.onGround=false;
+            player.targetRotation+=270; // 270度回転
+        }
+    }else if(gameState==="gameover"){
+        showStart();
+    }
+}
+
+// ================= 衝突判定 =================
+function isColliding(a,b){
+    return a.x < b.x + b.size &&
+           a.x + a.width > b.x &&
+           a.y < b.y + b.size &&
+           a.y + a.height > b.y;
+}
+
+// ================= 障害物生成 =================
+function spawnObstacle(){
+    const size=35;
+    obstacles.push({
+        x:canvas.width,
+        y:canvas.height-groundHeight-size,
+        size:size
+    });
+
+    if(Math.random()<0.25*difficulty){
+        holes.push({
+            x:canvas.width,
+            width:80
+        });
+    }
+}
+
+// ================= 更新 =================
+function update(){
+    if(gameState!=="play") return;
+
+    speed+=0.001*difficulty;
+    distance+=speed;
+    bgOffset+=speed*0.5;
+
+    // 物理
+    player.dy+=player.gravity;
+    player.y+=player.dy;
+
+    let groundY=canvas.height-groundHeight-player.height;
+    player.onGround=false;
+
+    for(let hole of holes){
+        if(player.x+player.width>hole.x &&
+           player.x<hole.x+hole.width){
+            groundY=canvas.height;
+        }
+    }
+
+    if(player.y>=groundY){
+        player.y=groundY;
+        player.dy=0;
+        player.onGround=true;
+    }
+
+    // 回転補間
+    if(player.rotation<player.targetRotation){
+        player.rotation+=15;
+    }
+
+    obstacles.forEach(o=>o.x-=speed);
+    holes.forEach(h=>h.x-=speed);
+
+    obstacles=obstacles.filter(o=>o.x+o.size>0);
+    holes=holes.filter(h=>h.x+h.width>0);
+
+    // 衝突
+    for(let o of obstacles){
+        if(isColliding(player,o)){
+            gameOver();
+        }
+    }
+
+    if(player.y>canvas.height){
+        gameOver();
+    }
+
+    spawnTimer++;
+    if(spawnTimer>120-difficulty*20){
+        spawnObstacle();
+        spawnTimer=0;
+    }
+}
+
+// ================= 描画 =================
+function draw(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    ctx.fillStyle="#001";
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    // パララックス
+    ctx.fillStyle="#022";
+    for(let i=0;i<canvas.width;i+=200){
+        ctx.fillRect((i-bgOffset)%canvas.width,100,150,300);
+    }
+
+    // 地面
+    ctx.fillStyle="#0ff";
+    ctx.fillRect(0,canvas.height-groundHeight,canvas.width,groundHeight);
+
+    // 穴
+    ctx.fillStyle="black";
+    holes.forEach(h=>{
+        ctx.fillRect(h.x,canvas.height-groundHeight,h.width,groundHeight);
+    });
+
+    // 三角トゲ
+    ctx.fillStyle="#f0f";
+    obstacles.forEach(o=>{
+        ctx.beginPath();
+        ctx.moveTo(o.x, o.y+o.size);
+        ctx.lineTo(o.x+o.size/2, o.y);
+        ctx.lineTo(o.x+o.size, o.y+o.size);
+        ctx.closePath();
+        ctx.fill();
+    });
+
+    // プレイヤー（回転）
+    ctx.save();
+    ctx.translate(player.x+player.width/2, player.y+player.height/2);
+    ctx.rotate(player.rotation*Math.PI/180);
+    ctx.fillStyle="#0f0";
+    ctx.fillRect(-player.width/2,-player.height/2,player.width,player.height);
+    ctx.restore();
+
+    // スコア
+    ctx.fillStyle="#0ff";
+    ctx.fillText("Score: "+Math.floor(distance),20,30);
+    ctx.fillText("Best: "+bestScore,20,50);
+}
+
+// ================= ゲームオーバー =================
+function gameOver(){
+    gameState="gameover";
+    if(distance>bestScore){
+        bestScore=Math.floor(distance);
+        localStorage.setItem("neonBest",bestScore);
+    }
+    document.getElementById("ui").innerHTML=
+        "<h1>GAME OVER</h1><p>Click to Restart</p>";
+}
+
+// ================= スタート =================
+function showStart(){
+    gameState="start";
+    document.getElementById("ui").innerHTML=
+    `<h1>NEON DASH</h1>
+    <p>難易度を選択</p>
+    <button onclick="setDifficulty(1)">EASY</button>
+    <button onclick="setDifficulty(2)">NORMAL</button>
+    <button onclick="setDifficulty(3)">HARD</button>`;
+}
+showStart();
+
+// ================= ループ =================
+function gameLoop(){
+    update();
+    draw();
+    requestAnimationFrame(gameLoop);
+}
+gameLoop();
+
+</script>
+</body>
+</html>
